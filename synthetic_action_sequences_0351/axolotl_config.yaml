@@ -1,0 +1,118 @@
+# =============================================================================
+# Axolotl LoRA Fine-Tuning Configuration
+# Model: NousResearch/Meta-Llama-3-8B-Instruct
+# Dataset: 2,000 synthetic action sequence pairs (1,600 train / 200 val / 200 test)
+# Purpose: Train an autonomous infrastructure orchestration agent
+# Format: OpenAI Messages (chat_template)
+# =============================================================================
+
+# --- Model ---
+base_model: NousResearch/Meta-Llama-3-8B-Instruct
+model_type: LlamaForCausalLM
+tokenizer_type: AutoTokenizer
+tokenizer_config: null
+trust_remote_code: false
+
+# --- Quantization ---
+load_in_8bit: true
+load_in_4bit: false
+strict: false
+
+# --- Chat Template ---
+chat_template: llama3
+# Axolotl's chat_template type handles loss masking automatically:
+# user/role messages are masked from training loss so the model only learns
+# to predict assistant responses (the structured JSON action sequences).
+# No manual train_on_inputs = false needed.
+
+# --- Dataset ---
+datasets:
+  - path: chat_train.jsonl
+    type: chat_template
+    split: train
+
+test_datasets:
+  - path: chat_val.jsonl
+    type: chat_template
+
+# Or use a single file with val_set_size if you prefer random splitting:
+# val_set_size: 0.0  # using explicit val file instead
+
+dataset_prepared_path: ./outputs/prepared
+output_dir: ./outputs/lora-out
+
+# --- Sequence Length ---
+# 95th percentile of complex records ≈ 4,200 tokens. Setting 8,192 gives
+# headroom for the longest 8+ step action chains plus system prompt.
+sequence_len: 8192
+
+# --- LoRA Configuration ---
+adapter: lora
+lora_r: 32
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target_linear: true
+# This targets: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+peft_use_rslora: false  # standard LoRA (not Rank-Stabilized)
+
+# --- Training Hyperparameters ---
+# Effective batch size = micro_batch_size × gradient_accumulation_steps × num_devices
+micro_batch_size: 2
+gradient_accumulation_steps: 4
+# With 1 GPU: 2 × 4 × 1 = 8
+# With 4 GPUs: 2 × 4 × 4 = 32
+num_epochs: 3
+max_steps: -1                # use num_epochs instead
+sample_packing: false        # no packing — each example is a complete conversation
+
+# --- Optimization ---
+optimizer: adamw_bnb_8bit
+learning_rate: 0.0002
+lr_scheduler: cosine
+warmup_ratio: 0.1
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+# --- Mixed Precision ---
+bf16: auto
+fp16: false
+tf32: true                   # faster matmuls on Ampere+
+
+# --- Memory Optimization ---
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+# Attention implementation: flash_attention_2 recommended for speed & memory
+# Skip if fa2 not installed on your GPU — will fall back to sdpa
+attn_implementation: flash_attention_2
+
+# --- Evaluation & Logging ---
+evals_per_epoch: 4
+eval_steps: null             # use evals_per_epoch instead
+eval_sample_packing: false
+logging_steps: 10
+save_strategy: steps
+save_steps: 0                # 0 = save per epoch (per default saves_per_epoch)
+saves_per_epoch: 1
+save_total_limit: 2          # keep last 2 checkpoints
+load_best_model_at_end: false
+
+# --- Loss Masking (Train on Assistant Only) ---
+roles_to_train:
+  - assistant
+train_on_eos: turn           # train on EOS tokens to teach clean generation end
+eot_tokens: []               # no custom end-of-turn tokens needed for llama3
+
+# --- Special Tokens ---
+special_tokens:
+  pad_token: <|end_of_text|>
+
+# --- Reporting ---
+wandb_mode: disabled         # set to "online" if using Weights & Biases
+# wandb_project: action-sequence-lora
+# mlflow_tracking_uri: null
+
+# --- Misc ---
+flash_optimum: false         # not needed with flash_attn
+loss_watchdog_threshold: null
+watchdog_messages: null
